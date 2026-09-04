@@ -1,0 +1,4 @@
+/build/
+/out/
+*.ko
+!device/target/*.ko

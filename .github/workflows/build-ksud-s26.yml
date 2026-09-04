@@ -1,0 +1,92 @@
+name: Build ksud (Galaxy S26+)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_release:
+        description: 'uname -r EXATO do S26+ (deixe vazio p/ usar device/galaxy-s26-plus.env)'
+        required: false
+        type: string
+
+jobs:
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      kmi: ${{ steps.p.outputs.kmi }}
+      ddk_release: ${{ steps.p.outputs.ddk_release }}
+      kernel_release: ${{ steps.p.outputs.kernel_release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        env:
+          INPUT_REL: ${{ inputs.kernel_release }}
+        run: |
+          set -euo pipefail
+          set -a; . ./device/galaxy-s26-plus.env; set +a
+          REL="${INPUT_REL:-$KERNEL_RELEASE}"
+          if [ -z "$REL" ]; then
+            echo "::error::KERNEL_RELEASE vazio. Preencha device/galaxy-s26-plus.env ou passe o input kernel_release."
+            exit 1
+          fi
+          {
+            echo "kmi=${KMI}"
+            echo "ddk_release=${DDK_RELEASE}"
+            echo "kernel_release=${REL}"
+          } >> "$GITHUB_OUTPUT"
+          echo "KMI=${KMI}  DDK=${DDK_RELEASE}  RELEASE=${REL}"
+
+  lkm:
+    needs: config
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:${{ needs.config.outputs.kmi }}-${{ needs.config.outputs.ddk_release }}
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build kernelsu.ko
+        env:
+          IN_DDK: '1'
+          KERNEL_RELEASE: ${{ needs.config.outputs.kernel_release }}
+          KMI: ${{ needs.config.outputs.kmi }}
+        run: |
+          chmod +x scripts/build-lkm.sh
+          scripts/build-lkm.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.config.outputs.kmi }}_kernelsu.ko
+          path: out/lkm/${{ needs.config.outputs.kmi }}_kernelsu.ko
+          if-no-files-found: error
+
+  ksud:
+    needs: [config, lkm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Baixar módulo .ko
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.config.outputs.kmi }}_kernelsu.ko
+          path: out/lkm
+      - name: Setup Rust
+        run: |
+          rustup update stable
+          rustup target add aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+      - name: Setup NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+      - name: Build ksud
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          chmod +x scripts/build-ksud.sh
+          scripts/build-ksud.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ksud-galaxy-s26-plus
+          path: out/ksud
+          if-no-files-found: error
