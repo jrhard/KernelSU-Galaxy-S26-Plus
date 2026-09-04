@@ -61,15 +61,50 @@ if [ "${IN_DDK:-0}" = "1" ]; then
     [ -f "$f" ] && sed -i "s@${DEFAULT_REL}@${KERNEL_RELEASE}@g" "$f"
   done
 
+  # O late-loader (ksuinit) reescreve os simbolos indefinidos para SHN_ABS com
+  # enderecos do /proc/kallsyms, mas NAO toca na secao __versions. Se o modulo
+  # carregar os CRCs do GKI do DDK, o kernel Samsung rejeita em
+  # check_modstruct_version() -> "disagrees about version of symbol
+  # module_layout" -> -ENOEXEC. Zerando o Module.symvers do DDK, o modpost nao
+  # encontra CRC algum e emite __versions PRESENTE porem de tamanho 0: nesse
+  # caso check_version() nao acha entradas e libera, e same_magic() ignora a
+  # release string. E o que a receita Samsung exige.
+  if [ -f "$KDIR/Module.symvers" ]; then
+    cp "$KDIR/Module.symvers" "$WORK/Module.symvers.ddk.bak" 2>/dev/null || true
+    : > "$KDIR/Module.symvers"
+  fi
+
   make clean >/dev/null 2>&1 || true
   # shellcheck disable=SC2086
-  env $KSU_CONFIGS CC=clang make -j"$(nproc)"
+  env $KSU_CONFIGS KBUILD_MODPOST_WARN=1 CC=clang make -j"$(nproc)"
 
   echo "== modinfo =="
   modinfo ./kernelsu.ko | grep -E 'vermagic|name' || true
   VM="$(modinfo -F vermagic ./kernelsu.ko | awk '{print $1}')"
   if [ "$VM" != "$KERNEL_RELEASE" ]; then
     echo "ERRO: vermagic '$VM' != KERNEL_RELEASE '$KERNEL_RELEASE'"; exit 1
+  fi
+
+  # Gate: __versions precisa EXISTIR e ter tamanho 0 (ver comentario acima).
+  READER=""
+  for RE in readelf llvm-readelf; do
+    command -v "$RE" >/dev/null 2>&1 && { READER="$RE"; break; }
+  done
+  [ -n "$READER" ] || { echo "ERRO: nenhum readelf disponivel para validar __versions"; exit 1; }
+  VHEX="$("$READER" -SW ./kernelsu.ko 2>/dev/null \
+          | sed 's/^ *\[[ 0-9]*\] *//' \
+          | awk '$1=="__versions"{print $5; exit}')"
+  if [ -z "$VHEX" ]; then
+    echo "ERRO: secao __versions AUSENTE. Com CONFIG_MODULE_FORCE_LOAD=n o kernel"
+    echo "      recusa o modulo (try_to_force_load -> -ENOEXEC)."
+    exit 1
+  fi
+  VSZ=$((16#$VHEX))
+  echo "== __versions size: $VSZ bytes =="
+  if [ "$VSZ" -ne 0 ]; then
+    echo "ERRO: __versions tem $VSZ bytes (CRCs do DDK/GKI, nao do alvo Samsung)."
+    echo "      O kernel do aparelho vai rejeitar com 'disagrees about version of symbol'."
+    exit 1
   fi
 
   # Auditoria opcional contra o vmlinux do alvo, se fornecido em device/target/.

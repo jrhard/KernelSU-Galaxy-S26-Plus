@@ -46,6 +46,30 @@ coloque `vmlinux` e/ou `Module.symvers` do S26+ em `device/target/` (veja
 > de build do `vermagic` vem do **firmware já compilado** — por isso o
 > `uname -r` do aparelho é o dado mais importante.
 
+## Requisitos críticos do módulo (não regredir)
+
+O `.ko` é carregado pelo `ksud late-load`, que usa o loader de
+**manual-relocation** do `ksuinit`: ele reescreve cada símbolo `SHN_UNDEF` para
+`SHN_ABS` com o endereço vindo do `/proc/kallsyms` e então chama `init_module`.
+Duas condições decorrem disso e o build **falha de propósito** se não forem
+atendidas:
+
+1. **`__versions` presente e de tamanho 0.** O loader não toca nessa seção. Se
+   ela vier com os CRCs do GKI do DDK, o kernel Samsung rejeita em
+   `check_modstruct_version()` (`disagrees about version of symbol
+   module_layout` → `-ENOEXEC`). Com ela vazia, `check_version()` não acha
+   entradas e libera, e `same_magic()` ignora a release string. O build zera o
+   `Module.symvers` do DDK e usa `KBUILD_MODPOST_WARN=1` para isso, validando
+   o resultado com `readelf`.
+   Se a seção estiver **ausente** também falha: com `CONFIG_MODULE_FORCE_LOAD=n`
+   o kernel cai em `try_to_force_load()` → `-ENOEXEC`.
+
+2. **`CONFIG_KSU_SAMSUNG_NO_PATCH_TEXT=y`.** O patch de texto ao vivo
+   (`stop_machine` + escrita na syscall table) causa **panic em EL2
+   Samsung/Exynos**. Nesse modo `ksu_patch_text()` retorna `-EOPNOTSUPP` sem
+   chamar `stop_machine`, e o KernelSU usa o caminho fail-closed (kretprobe em
+   `__arm64_sys_setresuid` + kprobes de sucompat por endereço).
+
 ## Como buildar
 
 1. Preencha `device/galaxy-s26-plus.env` (pelo menos `KERNEL_RELEASE`).
