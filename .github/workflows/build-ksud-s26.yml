@@ -55,17 +55,21 @@ jobs:
       - id: gen
         run: |
           set -euo pipefail
+          # Sem ::add-mask:: de proposito: o GitHub REDIGE outputs que contenham
+          # segredos registrados, e as senhas chegariam vazias no job manager.
+          # Chave efêmera e descartável, nunca ecoada — mesmo comportamento do
+          # CI oficial do KernelSU.
           KEYSTORE_PASSWORD=$(openssl rand -hex 32)
           KEY_PASSWORD=$(openssl rand -hex 32)
-          echo "::add-mask::$KEYSTORE_PASSWORD"
-          echo "::add-mask::$KEY_PASSWORD"
+          # O '+' é separador de RDN em DN X.500 ("Incorrect AVA format"),
+          # então o nome do aparelho não pode entrar literalmente aqui.
           keytool -genkeypair \
             -alias s26-key \
             -keyalg RSA -keysize 2048 \
             -validity 10000 \
             -storepass "$KEYSTORE_PASSWORD" \
             -keypass "$KEY_PASSWORD" \
-            -dname "CN=KernelSU S26+ Build" \
+            -dname "CN=KernelSU S26 Plus Build" \
             -storetype JKS \
             -keystore key.jks
           {
