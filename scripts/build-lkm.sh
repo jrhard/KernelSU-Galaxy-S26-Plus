@@ -107,6 +107,21 @@ if [ "${IN_DDK:-0}" = "1" ]; then
     exit 1
   fi
 
+  # Gate: NO_PATCH_TEXT nao gera .o proprio (e so um -D), entao confirmamos no
+  # binario pela string que so existe nesse modo. Sem isso, o patch de texto ao
+  # vivo (stop_machine + escrita na syscall table) causa panic em EL2 Samsung.
+  case " $KSU_CONFIGS " in
+    *" CONFIG_KSU_SAMSUNG_NO_PATCH_TEXT=y "*)
+      if grep -aq "patch_text disabled for this Samsung target" ./kernelsu.ko; then
+        echo "== NO_PATCH_TEXT: confirmado no binario =="
+      else
+        echo "ERRO: CONFIG_KSU_SAMSUNG_NO_PATCH_TEXT=y foi solicitado, mas a marca"
+        echo "      correspondente nao esta no modulo (o -D nao propagou)."
+        exit 1
+      fi
+      ;;
+  esac
+
   # Auditoria opcional contra o vmlinux do alvo, se fornecido em device/target/.
   # Aceita vmlinux, vmlinux.elf, vmlinux.xz, vmlinux.gz (descomprime se preciso).
   RAW="$(ls "$REPO_ROOT"/device/target/vmlinux 2>/dev/null \
