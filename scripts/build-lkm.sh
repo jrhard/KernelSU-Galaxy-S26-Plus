@@ -72,11 +72,24 @@ if [ "${IN_DDK:-0}" = "1" ]; then
     echo "ERRO: vermagic '$VM' != KERNEL_RELEASE '$KERNEL_RELEASE'"; exit 1
   fi
 
-  # Auditoria opcional contra o vmlinux do alvo, se fornecido.
-  TGT_VMLINUX="$(ls "$REPO_ROOT"/device/target/vmlinux* 2>/dev/null | head -1 || true)"
-  if [ -n "$TGT_VMLINUX" ] && [ -x ./check_symbol ]; then
-    echo "== check_symbol contra alvo: $TGT_VMLINUX =="
-    ./check_symbol ./kernelsu.ko "$TGT_VMLINUX" || echo "AVISO: check_symbol reportou divergências (revise)."
+  # Auditoria opcional contra o vmlinux do alvo, se fornecido em device/target/.
+  # Aceita vmlinux, vmlinux.elf, vmlinux.xz, vmlinux.gz (descomprime se preciso).
+  RAW="$(ls "$REPO_ROOT"/device/target/vmlinux 2>/dev/null \
+        "$REPO_ROOT"/device/target/vmlinux.elf 2>/dev/null \
+        "$REPO_ROOT"/device/target/vmlinux.xz 2>/dev/null \
+        "$REPO_ROOT"/device/target/vmlinux.gz 2>/dev/null | head -1 || true)"
+  if [ -n "$RAW" ]; then
+    case "$RAW" in
+      *.xz) TGT_VMLINUX="$WORK/vmlinux"; xz -dc "$RAW" > "$TGT_VMLINUX" ;;
+      *.gz) TGT_VMLINUX="$WORK/vmlinux"; gzip -dc "$RAW" > "$TGT_VMLINUX" ;;
+      *)    TGT_VMLINUX="$RAW" ;;
+    esac
+    if [ -x ./check_symbol ]; then
+      echo "== check_symbol contra alvo: $RAW =="
+      ./check_symbol ./kernelsu.ko "$TGT_VMLINUX" || echo "AVISO: check_symbol reportou divergencias (revise)."
+    fi
+  else
+    echo "== sem device/target/vmlinux: auditoria de simbolos pulada =="
   fi
 
   llvm-strip -d ./kernelsu.ko
