@@ -74,9 +74,21 @@ if [ "${IN_DDK:-0}" = "1" ]; then
     : > "$KDIR/Module.symvers"
   fi
 
+  # Slot 2 de assinatura de manager: permite que o modulo aceite TAMBEM um
+  # manager assinado com a nossa chave, sem perder o oficial (slot 1, default
+  # do Kbuild). O Kbuild aborta se um for definido sem o outro.
+  EXTRA_SIG=""
+  if [ -n "${KSU_EXPECTED_SIZE2:-}" ] || [ -n "${KSU_EXPECTED_HASH2:-}" ]; then
+    if [ -z "${KSU_EXPECTED_SIZE2:-}" ] || [ -z "${KSU_EXPECTED_HASH2:-}" ]; then
+      echo "ERRO: defina KSU_EXPECTED_SIZE2 e KSU_EXPECTED_HASH2 juntos."; exit 1
+    fi
+    EXTRA_SIG="KSU_EXPECTED_SIZE2=$KSU_EXPECTED_SIZE2 KSU_EXPECTED_HASH2=$KSU_EXPECTED_HASH2"
+    echo "== assinatura de manager (slot 2): $KSU_EXPECTED_SIZE2 / $KSU_EXPECTED_HASH2 =="
+  fi
+
   make clean >/dev/null 2>&1 || true
   # shellcheck disable=SC2086
-  env $KSU_CONFIGS KBUILD_MODPOST_WARN=1 CC=clang make -j"$(nproc)"
+  env $KSU_CONFIGS $EXTRA_SIG KBUILD_MODPOST_WARN=1 CC=clang make -j"$(nproc)"
 
   echo "== modinfo =="
   modinfo ./kernelsu.ko | grep -E 'vermagic|name' || true

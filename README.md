@@ -87,6 +87,29 @@ adb shell su -c 'cp /data/local/tmp/ksud /data/local/tmp/.ksud-stage && \
   chmod 755 /data/local/tmp/.ksud-stage && /data/local/tmp/.ksud-stage late-load'
 ```
 
+## Manager casado (resolve o "version mismatch")
+
+Manager, driver e `ksud` derivam a versão da **mesma** fórmula
+(`30000 + git rev-list --count HEAD`). Um manager baixado de outra árvore gera:
+
+```
+Manager version (32601) and KernelSU driver version (32527) mismatch.
+```
+
+Por isso o workflow também compila o Manager **do commit fixado**, ficando
+`32527` nos três. Como o módulo valida a assinatura do manager, o job `key`
+gera uma chave, registra o certificado dela como **slot 2**
+(`KSU_EXPECTED_SIZE2`/`KSU_EXPECTED_HASH2`) e assina o APK com ela — o driver
+passa a aceitar tanto o manager oficial (slot 1) quanto o nosso.
+
+⚠️ **Ao instalar o APK:**
+
+1. **Desinstale o KernelSU Manager atual antes.** O APK novo usa outra chave de
+   assinatura; o Android recusa instalar por cima (`signatures do not match`).
+2. **Use o `ksud` e o APK da MESMA run.** A chave é gerada por execução, então
+   artefatos de runs diferentes não combinam. (Se preferir uma chave fixa,
+   guarde o `.jks` em GitHub Secrets e troque o job `key` por ele.)
+
 ## Build local (alternativa)
 
 Se preferir compilar na sua máquina (com NDK r29 e Docker), use os scripts em

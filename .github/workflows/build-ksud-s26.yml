@@ -7,6 +7,11 @@ on:
         description: 'uname -r EXATO do S26+ (deixe vazio p/ usar device/galaxy-s26-plus.env)'
         required: false
         type: string
+      build_manager:
+        description: 'Também compilar o KernelSU Manager (versão casada com o driver)'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   config:
@@ -35,8 +40,57 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "KMI=${KMI}  DDK=${DDK_RELEASE}  RELEASE=${REL}"
 
+  # Chave efêmera para assinar o Manager. Seu certificado vira o "slot 2" de
+  # assinatura no módulo, de modo que o driver aceite tanto o manager oficial
+  # (slot 1, default do Kbuild) quanto o nosso.
+  key:
+    runs-on: ubuntu-latest
+    outputs:
+      keystore: ${{ steps.gen.outputs.keystore }}
+      keystore_password: ${{ steps.gen.outputs.keystore_password }}
+      key_password: ${{ steps.gen.outputs.key_password }}
+      expected_size: ${{ steps.extract.outputs.expected_size }}
+      expected_hash: ${{ steps.extract.outputs.expected_hash }}
+    steps:
+      - id: gen
+        run: |
+          set -euo pipefail
+          KEYSTORE_PASSWORD=$(openssl rand -hex 32)
+          KEY_PASSWORD=$(openssl rand -hex 32)
+          echo "::add-mask::$KEYSTORE_PASSWORD"
+          echo "::add-mask::$KEY_PASSWORD"
+          keytool -genkeypair \
+            -alias s26-key \
+            -keyalg RSA -keysize 2048 \
+            -validity 10000 \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -dname "CN=KernelSU S26+ Build" \
+            -storetype JKS \
+            -keystore key.jks
+          {
+            echo "keystore_password=$KEYSTORE_PASSWORD"
+            echo "key_password=$KEY_PASSWORD"
+            echo "keystore=$(base64 -w 0 key.jks)"
+          } >> "$GITHUB_OUTPUT"
+      - id: extract
+        env:
+          STORE_PASS: ${{ steps.gen.outputs.keystore_password }}
+        run: |
+          set -euo pipefail
+          keytool -exportcert -alias s26-key -keystore key.jks \
+            -storepass "$STORE_PASS" -file cert.der
+          SIZE_DEC=$(stat -c%s cert.der)
+          SIZE_HEX=$(printf '0x%04x' "$SIZE_DEC")
+          HASH=$(sha256sum cert.der | awk '{print $1}')
+          {
+            echo "expected_size=$SIZE_HEX"
+            echo "expected_hash=$HASH"
+          } >> "$GITHUB_OUTPUT"
+          echo "Certificado: $SIZE_HEX ($SIZE_DEC bytes) / $HASH"
+
   lkm:
-    needs: config
+    needs: [config, key]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/ylarod/ddk-min:${{ needs.config.outputs.kmi }}-${{ needs.config.outputs.ddk_release }}
@@ -48,6 +102,8 @@ jobs:
           IN_DDK: '1'
           KERNEL_RELEASE: ${{ needs.config.outputs.kernel_release }}
           KMI: ${{ needs.config.outputs.kmi }}
+          KSU_EXPECTED_SIZE2: ${{ needs.key.outputs.expected_size }}
+          KSU_EXPECTED_HASH2: ${{ needs.key.outputs.expected_hash }}
         run: |
           chmod +x scripts/build-lkm.sh
           scripts/build-lkm.sh
@@ -71,9 +127,6 @@ jobs:
         run: |
           rustup update stable
           rustup target add aarch64-linux-android
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false
       - name: Setup NDK
         id: ndk
         uses: nttld/setup-ndk@v1
@@ -89,4 +142,39 @@ jobs:
         with:
           name: ksud-galaxy-s26-plus
           path: out/ksud
+          if-no-files-found: error
+
+  manager:
+    needs: [config, key, ksud]
+    if: ${{ inputs.build_manager }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Baixar ksud
+        uses: actions/download-artifact@v4
+        with:
+          name: ksud-galaxy-s26-plus
+          path: out
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Restaurar keystore
+        env:
+          KEYSTORE_B64: ${{ needs.key.outputs.keystore }}
+        run: echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/key.jks"
+      - name: Build Manager APK
+        env:
+          KEYSTORE: ${{ runner.temp }}/key.jks
+          KEYSTORE_PASSWORD: ${{ needs.key.outputs.keystore_password }}
+          KEY_ALIAS: s26-key
+          KEY_PASSWORD: ${{ needs.key.outputs.key_password }}
+        run: |
+          chmod +x scripts/build-manager.sh
+          scripts/build-manager.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KernelSU-Manager-apk
+          path: out/KernelSU-Manager.apk
           if-no-files-found: error
