@@ -14,6 +14,13 @@ Se esta pasta ficar vazia, o build do `.ko` ainda ocorre, mas **sem** a
 auditoria contra o alvo — nesse caso confie no `vermagic` (KERNEL_RELEASE) e
 teste o carregamento no aparelho.
 
+## Estado atual
+
+- `vmlinux.xz` — fornecido pelo usuário, firmware **`S947BXXS3AZF1` (ZF1)**.
+  O aparelho está na **`ZHA`** (mais nova), então a auditoria é **aproximada**:
+  mesmo KMI `android16-6.12`, símbolos exportados praticamente idênticos. Para
+  auditoria exata, substitua por um `vmlinux` extraído da firmware `ZHA`.
+
 > Não faça commit de `vmlinux` grande sem necessidade; ele pode passar de
 > centenas de MB. Prefira mantê-lo localmente e rodar o build local, ou usar
 > Git LFS.
